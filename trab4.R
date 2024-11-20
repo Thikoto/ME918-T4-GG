@@ -10,9 +10,11 @@ library(shiny)
 library(dplyr, warn.conflicts = FALSE)
 library(forecast)
 library(vroom)
+library(shinythemes)
 
 # Define UI for application
 ui <- fluidPage(
+  theme = shinytheme("lumen"),
   titlePanel("Análise de Séries Temporais com ARIMA"),
   
   # Tabs for automatic and manual adjustment
@@ -23,7 +25,6 @@ ui <- fluidPage(
                  fileInput("upload", "Upload da Série Temporal", accept = c(".csv", ".tsv")),
                  numericInput("n", "Primeira Data", value = 1, min = 1, step = 1),
                  numericInput("n2", "Última Data", value = 10, min = 1, step = 1),
-                 numericInput("h", "Previsão de Valores Futuros", value = 10, min = 1, step = 1),
                  actionButton("auto", "Estimar ARIMA Automaticamente"),
                  hr(),
                  verbatimTextOutput("model_output"),
@@ -36,9 +37,7 @@ ui <- fluidPage(
                  plotOutput("residual_plot"),
                  plotOutput("residual_acf_plot"),
                  plotOutput("residual_histogram"),
-                 plotOutput("qq_plot"),
-                 plotOutput("forecast_plot"),
-                 plotOutput("future_forecast_plot")
+                 plotOutput("qq_plot")
                )
              )
     ),
@@ -46,21 +45,38 @@ ui <- fluidPage(
              sidebarLayout(
                sidebarPanel(
                  fileInput("upload_manual", "Upload da Série Temporal", accept = c(".csv", ".tsv")),
-                 numericInput("h_manual", "Previsão de Valores Futuros", value = 10, min = 1, step = 1),
+                 numericInput("n_manual", "Primeira Data", value = 1, min = 1, step = 1),
+                 numericInput("n2_manual", "Última Data", value = 10, min = 1, step = 1),
                  numericInput("p", "p: Ordem autorregressiva (AR)", value = 0, min = 0),
                  numericInput("d", "d: Número de diferenciações (I)", value = 0, min = 0),
                  numericInput("q", "q: Ordem de média móvel (MA)", value = 0, min = 0),
                  numericInput("P", "P: Ordem sazonal autorregressiva", value = 0, min = 0),
                  numericInput("D", "D: Diferenciações sazonais", value = 0, min = 0),
                  numericInput("Q", "Q: Ordem sazonal de média móvel", value = 0, min = 0),
-                 numericInput("s", "s: Período sazonal", value = 1, min = 1),
                  actionButton("manual_fit", "Ajustar Modelo Manualmente"),
                  hr(),
                  verbatimTextOutput("manual_model_output"),
                  verbatimTextOutput("manual_residual_test")
                ),
                mainPanel(
-                 plotOutput("manual_forecast_plot"),
+                 plotOutput("manual_time_series_plot"),
+                 plotOutput("manual_acf_plot"),
+                 plotOutput("manual_pacf_plot"),
+                 plotOutput("manual_residual_plot"),
+                 plotOutput("manual_residual_acf_plot"),
+                 plotOutput("manual_residual_histogram"),
+                 plotOutput("manual_qq_plot")
+               )
+             )
+    ),
+    tabPanel("Previsão",
+             sidebarLayout(
+               sidebarPanel(
+                 numericInput("h", "Previsão de Valores Futuros", value = 10, min = 1, step = 1),
+                 actionButton("forecast", "Previsão Futura"),
+               ),
+               mainPanel(
+                 plotOutput("future_forecast_plot"),
                  plotOutput("manual_future_forecast_plot")
                )
              )
@@ -110,6 +126,8 @@ server <- function(input, output, session) {
     req(auto_model())
     Box.test(residuals(auto_model()), lag = 10, type = "Ljung-Box")
   })
+  
+  
   
   # Plot time series for automatic model
   output$time_series_plot <- renderPlot({
@@ -163,33 +181,25 @@ server <- function(input, output, session) {
     qqline(residuals, col = "red")
   })
   
-  # Forecast plot for automatic model
-  output$forecast_plot <- renderPlot({
-    req(auto_model())
-    serietemporal <- ts(data()[, 2])
-    h <- input$h
-    forecast_result <- forecast(auto_model(), h = h)
-    plot(forecast_result, main = paste("Previsão para os Próximos", h, "Passos"),
-         xlab = "Tempo", ylab = "Valores")
-  })
   
-  # Future forecast plot for automatic model
-  output$future_forecast_plot <- renderPlot({
-    req(auto_model())
-    serietemporal <- ts(data()[, 2])
-    h <- input$h
-    forecast_result <- forecast(auto_model(), h = h)
-    plot(forecast_result, main = paste("Previsão para os Próximos", h, "Passos"),
-         xlab = "Tempo", ylab = "Valores", col = "blue")
+  # Reactive dataset for manual model
+  data_manual <- reactive({
+    req(input$upload_manual)
+    ext <- tools::file_ext(input$upload_manual$name)
+    switch(ext,
+           csv = vroom::vroom(input$upload_manual$datapath, delim = ","),
+           tsv = vroom::vroom(input$upload_manual$datapath, delim = "\t"),
+           validate("Arquivo inválido. Por favor, carregue um .csv ou .tsv")
+    )
   })
   
   # Manual model fitting
   manual_model <- reactiveVal()
   
   observeEvent(input$manual_fit, {
-    serietemporal <- ts(data()[, 2])  # Assuming the time series is in the 2nd column
+    serietemporal <- ts(data_manual()[, 2])  # Série temporal na 2 coluna
     model <- Arima(serietemporal, order = c(input$p, input$d, input$q),
-                   seasonal = c(input$P, input$D, input$Q), period = input$s)
+                   seasonal = c(input$P, input$D, input$Q))
     manual_model(model)
   })
   
@@ -207,25 +217,83 @@ server <- function(input, output, session) {
     Box.test(residuals(manual_model()), lag = 10, type = "Ljung-Box")
   })
   
-  # Forecast plot for manual model
-  output$manual_forecast_plot <- renderPlot({
+  
+  # Plot time series for manual model
+  output$manual_time_series_plot <- renderPlot({
     req(manual_model())
-    serietemporal <- ts(data()[, 2])
-    h <- input$h_manual
-    forecast_result <- forecast(manual_model(), h = h)
-    plot(forecast_result, main = paste("Previsão para os Próximos", h, "Passos (Manual)"),
-         xlab = "Tempo", ylab = "Valores")
+    serietemporal <- ts(data_manual()[, 2])
+    plot(serietemporal, type = "l", main = "Série Temporal Original", 
+         xlab = "Tempo", ylab = "Valor")
   })
   
-  # Future forecast plot for manual model
-  output$manual_future_forecast_plot <- renderPlot({
+  # Plot ACF for manual model
+  output$manual_acf_plot <- renderPlot({
     req(manual_model())
-    serietemporal <- ts(data()[, 2])
-    h <- input$h_manual
-    forecast_result <- forecast(manual_model(), h = h)
-    plot(forecast_result, main = paste("Previsão para os Próximos", h, "Passos (Manual)"),
-         xlab = "Tempo", ylab = "Valores", col = "blue")
+    serietemporal <- ts(data_manual()[, 2])
+    Acf(serietemporal, main = "Função de Autocorrelação (ACF)")
   })
+  
+  # Plot PACF for manual model
+  output$manual_pacf_plot <- renderPlot({
+    req(manual_model())
+    serietemporal <- ts(data_manual()[, 2])
+    Pacf(serietemporal, main = "Função de Autocorrelação Parcial (PACF)")
+  })
+  
+  # Plot residuals for manual model
+  output$manual_residual_plot <- renderPlot({
+    req(manual_model())
+    residuals <- residuals(manual_model())
+    plot(residuals, type = "l", main = "Resíduos do Modelo ARIMA",
+         xlab = "Tempo", ylab = "Valor dos Resíduos")
+  })
+  
+  # Plot ACF of residuals for manual model
+  output$manual_residual_acf_plot <- renderPlot({
+    req(manual_model())
+    residuals <- residuals(manual_model())
+    Acf(residuals, main = "ACF dos Resíduos")
+  })
+  
+  # Plot histogram of residuals for manual model
+  output$manual_residual_histogram <- renderPlot({
+    req(manual_model())
+    residuals <- residuals(manual_model())
+    hist(residuals, main = "Histograma dos Resíduos", xlab = "Resíduos")
+  })
+  
+  # QQ-Plot of residuals for manual model
+  output$manual_qq_plot <- renderPlot({
+    req(manual_model())
+    residuals <- residuals(manual_model())
+    qqnorm(residuals, main = "QQ-Plot dos Resíduos")
+    qqline(residuals, col = "red")
+  })
+  
+  
+  
+  observeEvent(input$forecast, {
+    # Future forecast plot for automatic model
+    output$future_forecast_plot <- renderPlot({
+      req(auto_model())
+      serietemporal <- ts(data()[, 2])
+      h <- input$h
+      forecast_result <- forecast(auto_model(), h = h)
+      plot(forecast_result, main = paste("Previsão para os Próximos", h, "Passos (Modelo Automático)"),
+           xlab = "Tempo", ylab = "Valores", col = "blue")
+    })
+    
+    # Future forecast plot for manual model
+    output$manual_future_forecast_plot <- renderPlot({
+      req(manual_model())
+      serietemporal <- ts(data_manual()[, 2])
+      h <- input$h
+      forecast_result <- forecast(manual_model(), h = h)
+      plot(forecast_result, main = paste("Previsão para os Próximos", h, "Passos (Modelo Manual)"),
+           xlab = "Tempo", ylab = "Valores", col = "green")
+    })
+  })
+  
 }
 
 # Run the application
