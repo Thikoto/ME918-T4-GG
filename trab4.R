@@ -19,21 +19,30 @@ ui <- fluidPage(
   
   # Tabs for automatic and manual adjustment
   tabsetPanel(
-    tabPanel("Automático",
+    tabPanel("Leitura de Dados",
              sidebarLayout(
                sidebarPanel(
                  fileInput("upload", "Upload da Série Temporal", accept = c(".csv", ".tsv")),
                  numericInput("n", "Primeira Data", value = 1, min = 1, step = 1),
-                 numericInput("n2", "Última Data", value = 10, min = 1, step = 1),
-                 actionButton("auto", "Estimar ARIMA Automaticamente"),
-                 hr(),
-                 verbatimTextOutput("model_output"),
-                 verbatimTextOutput("residual_test")
+                 numericInput("n2", "Última Data", value = 10, min = 1, step = 1)
                ),
                mainPanel(
                  plotOutput("time_series_plot"),
                  plotOutput("acf_plot"),
-                 plotOutput("pacf_plot"),
+                 plotOutput("pacf_plot")
+               )
+             )
+    ),
+    tabPanel("Automático",
+             sidebarLayout(
+               sidebarPanel(
+                 actionButton("auto", "Estimar ARIMA Automaticamente"),
+                 hr(),
+                 verbatimTextOutput("model_output"),
+                 verbatimTextOutput("criteria_output"),
+                 verbatimTextOutput("residual_test")
+               ),
+               mainPanel(
                  plotOutput("residual_plot"),
                  plotOutput("residual_acf_plot"),
                  plotOutput("residual_histogram"),
@@ -44,9 +53,6 @@ ui <- fluidPage(
     tabPanel("Manual",
              sidebarLayout(
                sidebarPanel(
-                 fileInput("upload_manual", "Upload da Série Temporal", accept = c(".csv", ".tsv")),
-                 numericInput("n_manual", "Primeira Data", value = 1, min = 1, step = 1),
-                 numericInput("n2_manual", "Última Data", value = 10, min = 1, step = 1),
                  numericInput("p", "p: Ordem autorregressiva (AR)", value = 0, min = 0),
                  numericInput("d", "d: Número de diferenciações (I)", value = 0, min = 0),
                  numericInput("q", "q: Ordem de média móvel (MA)", value = 0, min = 0),
@@ -56,12 +62,10 @@ ui <- fluidPage(
                  actionButton("manual_fit", "Ajustar Modelo Manualmente"),
                  hr(),
                  verbatimTextOutput("manual_model_output"),
+                 verbatimTextOutput("manual_criteria_output"),
                  verbatimTextOutput("manual_residual_test")
                ),
                mainPanel(
-                 plotOutput("manual_time_series_plot"),
-                 plotOutput("manual_acf_plot"),
-                 plotOutput("manual_pacf_plot"),
                  plotOutput("manual_residual_plot"),
                  plotOutput("manual_residual_acf_plot"),
                  plotOutput("manual_residual_histogram"),
@@ -86,8 +90,12 @@ ui <- fluidPage(
 
 # Define server logic
 server <- function(input, output, session) {
-  # Reactive dataset for automatic model
-  data <- reactive({
+  
+  datas <- reactive({
+    seq(input$n, input$n2)
+  })
+  
+  data1 <- reactive({
     req(input$upload)
     ext <- tools::file_ext(input$upload$name)
     switch(ext,
@@ -95,6 +103,30 @@ server <- function(input, output, session) {
            tsv = vroom::vroom(input$upload$datapath, delim = "\t"),
            validate("Arquivo inválido. Por favor, carregue um .csv ou .tsv")
     )
+  })
+  
+  data <- reactive({
+    req(input$upload)
+    data1()[datas(), ]
+  })
+  
+  # Plot time series for automatic model
+  output$time_series_plot <- renderPlot({
+    serietemporal <- ts(data()[, 2])
+    plot(serietemporal, type = "l", main = "Série Temporal Original", 
+         xlab = "Tempo", ylab = "Valor")
+  })
+  
+  # Plot ACF for automatic model
+  output$acf_plot <- renderPlot({
+    serietemporal <- ts(data()[, 2])
+    Acf(serietemporal, main = "Função de Autocorrelação (ACF)")
+  })
+  
+  # Plot PACF for automatic model
+  output$pacf_plot <- renderPlot({
+    serietemporal <- ts(data()[, 2])
+    Pacf(serietemporal, main = "Função de Autocorrelação Parcial (PACF)")
   })
   
   # Reactive value for storing the automatic model
@@ -122,34 +154,22 @@ server <- function(input, output, session) {
     print(summary(auto_model()))
   })
   
+  output$criteria_output <- renderPrint({
+    req(auto_model())
+    model <- auto_model()
+    aicc <- model$aicc
+    cat("Critérios de Informação:\n")
+    cat(sprintf("AIC: %.2f\n", AIC(model)))
+    cat(sprintf("AICc: %.2f\n", aicc))
+    cat(sprintf("BIC: %.2f\n", BIC(model)))
+  })
+  
   output$residual_test <- renderPrint({
     req(auto_model())
     Box.test(residuals(auto_model()), lag = 10, type = "Ljung-Box")
   })
   
   
-  
-  # Plot time series for automatic model
-  output$time_series_plot <- renderPlot({
-    req(auto_model())
-    serietemporal <- ts(data()[, 2])
-    plot(serietemporal, type = "l", main = "Série Temporal Original", 
-         xlab = "Tempo", ylab = "Valor")
-  })
-  
-  # Plot ACF for automatic model
-  output$acf_plot <- renderPlot({
-    req(auto_model())
-    serietemporal <- ts(data()[, 2])
-    Acf(serietemporal, main = "Função de Autocorrelação (ACF)")
-  })
-  
-  # Plot PACF for automatic model
-  output$pacf_plot <- renderPlot({
-    req(auto_model())
-    serietemporal <- ts(data()[, 2])
-    Pacf(serietemporal, main = "Função de Autocorrelação Parcial (PACF)")
-  })
   
   # Plot residuals for automatic model
   output$residual_plot <- renderPlot({
@@ -182,22 +202,11 @@ server <- function(input, output, session) {
   })
   
   
-  # Reactive dataset for manual model
-  data_manual <- reactive({
-    req(input$upload_manual)
-    ext <- tools::file_ext(input$upload_manual$name)
-    switch(ext,
-           csv = vroom::vroom(input$upload_manual$datapath, delim = ","),
-           tsv = vroom::vroom(input$upload_manual$datapath, delim = "\t"),
-           validate("Arquivo inválido. Por favor, carregue um .csv ou .tsv")
-    )
-  })
-  
   # Manual model fitting
   manual_model <- reactiveVal()
   
   observeEvent(input$manual_fit, {
-    serietemporal <- ts(data_manual()[, 2])  # Série temporal na 2 coluna
+    serietemporal <- ts(data()[, 2])  # Série temporal na 2 coluna
     model <- Arima(serietemporal, order = c(input$p, input$d, input$q),
                    seasonal = c(input$P, input$D, input$Q))
     manual_model(model)
@@ -212,33 +221,22 @@ server <- function(input, output, session) {
     print(summary(manual_model()))
   })
   
+  output$manual_criteria_output <- renderPrint({
+    req(manual_model())
+    model <- manual_model()
+    aicc <- model$aicc
+    cat("Critérios de Informação:\n")
+    cat(sprintf("AIC: %.2f\n", AIC(model)))
+    cat(sprintf("AICc: %.2f\n", aicc))
+    cat(sprintf("BIC: %.2f\n", BIC(model)))
+  })
+  
   output$manual_residual_test <- renderPrint({
     req(manual_model())
     Box.test(residuals(manual_model()), lag = 10, type = "Ljung-Box")
   })
   
   
-  # Plot time series for manual model
-  output$manual_time_series_plot <- renderPlot({
-    req(manual_model())
-    serietemporal <- ts(data_manual()[, 2])
-    plot(serietemporal, type = "l", main = "Série Temporal Original", 
-         xlab = "Tempo", ylab = "Valor")
-  })
-  
-  # Plot ACF for manual model
-  output$manual_acf_plot <- renderPlot({
-    req(manual_model())
-    serietemporal <- ts(data_manual()[, 2])
-    Acf(serietemporal, main = "Função de Autocorrelação (ACF)")
-  })
-  
-  # Plot PACF for manual model
-  output$manual_pacf_plot <- renderPlot({
-    req(manual_model())
-    serietemporal <- ts(data_manual()[, 2])
-    Pacf(serietemporal, main = "Função de Autocorrelação Parcial (PACF)")
-  })
   
   # Plot residuals for manual model
   output$manual_residual_plot <- renderPlot({
@@ -286,7 +284,7 @@ server <- function(input, output, session) {
     # Future forecast plot for manual model
     output$manual_future_forecast_plot <- renderPlot({
       req(manual_model())
-      serietemporal <- ts(data_manual()[, 2])
+      serietemporal <- ts(data()[, 2])
       h <- input$h
       forecast_result <- forecast(manual_model(), h = h)
       plot(forecast_result, main = paste("Previsão para os Próximos", h, "Passos (Modelo Manual)"),
