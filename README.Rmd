@@ -14,6 +14,8 @@ knitr::opts_chunk$set(echo = TRUE)
 Este Shiny foi desenvolvido utilizando o pacote **shiny** no software Rstudio, 
 para realizar análises e modelagens de séries temporais, de maneira automática e manual. 
 
+Ele pode ser acessado através do link  https://thikoto.shinyapps.io/Trabalho4_ME918_GG/
+
 ### Conjunto de Dados
 
 O conjunto de dados deve conter a primeira coluna com as datas e a segunda coluna 
